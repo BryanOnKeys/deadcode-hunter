@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "deadcode-hunter"
+version = "0.1.0"
+description = "Find dead code in Python projects — and prove it's safe to delete."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+keywords = ["dead-code", "static-analysis", "refactoring"]
+dependencies = [
+    "typer>=0.9",
+    "rich>=13",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+deadcode-hunter = "deadcode_hunter.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/zheng0629/deadcode-hunter"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = ["fixtures"]
