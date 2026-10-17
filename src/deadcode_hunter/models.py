@@ -46,6 +46,8 @@ class Symbol:
     in_test_file: bool = False
     exported: bool = False  # listed in __all__
     is_entry_point: bool = False  # test functions, fixtures, ...
+    public_api: bool = False  # public symbol (e.g. Java public method): no in-codebase
+    # refs, but may be used by external callers -> high with an API note
 
 
 @dataclass

@@ -8,6 +8,8 @@
 
 ```bash
 pip install deadcode-hunter
+# 加 Java 支持（基于 tree-sitter 的扫描器）
+pip install "deadcode-hunter[java]"
 # 或从源码
 pip install -e ".[dev]"
 ```
@@ -130,11 +132,41 @@ deadcode-hunter report ./src --prove-json prove.json
 
 简单说：vulture 回答"这段代码可能没用"；deadcode-hunter 回答"这段代码删掉是安全的，这是证据"。
 
+## Java 支持
+
+Java 引擎基于 [tree-sitter](https://tree-sitter.github.io/)，走**同一套管线**——同样的置信度分级、证据链、`prove`、HTML 报告。按文件扩展名自动识别语言（`.py` → Python，`.java` → Java），混有两种文件的目录都会扫；可用 `--lang` 覆盖：
+
+```bash
+deadcode-hunter scan ./my-java-project
+deadcode-hunter scan ./mixed --lang java   # 只扫 .java
+deadcode-hunter scan ./mixed --lang python # 只扫 .py
+```
+
+Java 特有的规则：
+
+- `main` 方法（含它的类）是程序入口——永不报告
+- `@Override` 方法视为"生来就活着"（它和父类/接口绑死了）——不报告
+- 其他注解（如 `@Test`）降为 medium，和 Python 的装饰器一个待遇
+- `private` 成员无引用 → high；`public` 成员无引用 → high，但证据链会注明"可能是对外 API"
+- 反射字符串（`Class.forName("com.foo.Bar")`、`getMethod("name")`）会把目标降为 medium 而不是 high
+- 未使用的 import → high；`import pkg.*` 永不报告（它到底提供了哪些名字无从得知，报了就是误报）
+- 构造器会被跟踪：`new Foo()` 会同时保住类和构造器
+
+Java 项目用 `prove` 时，用 `--test-cmd` 指定自己的构建命令：
+
+```bash
+deadcode-hunter prove ./my-java-project --test-cmd "mvn -q test"
+# 或：deadcode-hunter prove ./my-java-project --test-cmd "gradle test"
+```
+
+Java 特有的局限：同样没有完整类型推导；注解处理器 / DI 框架（Spring、Dagger……）的装配是隐式的——框架管理的 bean 被报 high 时多留个心眼。
+
 ## Roadmap
 
 - **M1 跨文件扫描**（已实现）：跨文件引用解析，high/medium/low 三档置信度 + 证据链。
 - **M2 --prove**（已实现）：`deadcode-hunter prove`——git worktree 隔离 + 测试套件，对 high 置信度候选做"删除验证"，把"证明安全"从静态做到动态。
 - **M3 HTML 报告**（已实现）：`deadcode-hunter report`——单个自包含 HTML 文件（零外部依赖），汇总统计、可点击文件树、证据链、源码片段展开 + 死代码行高亮、符号搜索、深色模式；可用 `--prove-json` 把 prove 结果合并进来。
+- **Java 支持**（已实现）：基于 tree-sitter 的扫描器（可选安装 `pip install "deadcode-hunter[java]"`），走同一套管线——置信度、证据链、`prove`、HTML 报告全都有；`--lang auto|python|java` 可选语言。
 - **TypeScript 支持**：把同一套"跨文件引用 + 置信度"模型搬到 TS（基于 tsc 的符号解析）。
 
 ## 开发

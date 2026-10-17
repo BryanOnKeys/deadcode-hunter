@@ -1,11 +1,11 @@
 # deadcode-hunter
 
-> Find dead code in Python projects — **and prove it's safe to delete.**
+> Find dead code in Python and Java projects — **and prove it's safe to delete.**
 
 ![build](https://img.shields.io/badge/build-passing-brightgreen)
 ![python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
-![version](https://img.shields.io/badge/version-0.1.0-orange)
+![version](https://img.shields.io/badge/version-0.2.0-orange)
 
 Most dead-code detectors (like vulture) do text-level "did this name appear anywhere" matching — cross-file imports, instance methods and decorators quickly turn into false positives or misses. deadcode-hunter does **cross-file reference resolution**: it understands `import` chains, `self` method calls, and method calls after `obj = Klass()`, then grades every candidate with a **confidence level** — only "deleting this is definitely safe" gets marked high.
 
@@ -15,6 +15,8 @@ Zero heavy dependencies (CLI is just typer + rich), the analysis engine uses onl
 
 ```bash
 pip install deadcode-hunter
+# with Java support (tree-sitter based scanner)
+pip install "deadcode-hunter[java]"
 # or from source
 pip install -e ".[dev]"
 ```
@@ -136,6 +138,35 @@ Every candidate carries an **evidence chain**: definition location, reference co
 - Annotations as types: `x.bar()` inside `def f(x: Foo)` resolves to `Foo.bar`
 - Respects `.gitignore`; skips `.venv` / `__pycache__` / `.git`
 
+## Java support
+
+The Java engine is built on [tree-sitter](https://tree-sitter.github.io/) and feeds the **same pipeline** — same confidence levels, evidence chains, `prove`, and HTML reports. Language is detected by file extension (`.py` → Python, `.java` → Java); directories mixing both scan both. Override with `--lang`:
+
+```bash
+deadcode-hunter scan ./my-java-project
+deadcode-hunter scan ./mixed --lang java   # only .java files
+deadcode-hunter scan ./mixed --lang python # only .py files
+```
+
+Java-specific rules:
+
+- `main` methods (and the class containing one) are entry points — never reported
+- `@Override` methods are treated as alive by construction (wired to their supertype)
+- Other annotations (e.g. `@Test`) downgrade to medium, like Python decorators
+- `private` members with no references → high; `public` ones → high with a *"may be a public API"* note in the evidence chain
+- Reflection string literals (`Class.forName("com.foo.Bar")`, `getMethod("name")`) downgrade their targets to medium instead of high
+- Unused imports → high; `import pkg.*` is never flagged (the names it provides are unknowable, so flagging it would be a false positive)
+- Constructors are tracked: `new Foo()` keeps both the class and its constructor alive
+
+For `prove` on Java projects, point `--test-cmd` at your own build:
+
+```bash
+deadcode-hunter prove ./my-java-project --test-cmd "mvn -q test"
+# or: deadcode-hunter prove ./my-java-project --test-cmd "gradle test"
+```
+
+Java-specific limitations: no full type inference (same conservative weak-reference rule as Python); annotation processors and DI frameworks (Spring, Dagger, …) wire code invisibly — treat `high` on framework-managed beans with suspicion.
+
 ## deadcode-hunter vs vulture
 
 | | vulture | deadcode-hunter |
@@ -164,6 +195,7 @@ Honest ones, so you can trust the rest:
 - ✅ **M1 — cross-file scanner** (done): reference resolution across files, high/medium/low confidence with evidence chains.
 - ✅ **M2 — `prove`** (done): deletion safety proof via isolated git worktrees + your test suite.
 - ✅ **M3 — HTML report** (done): single self-contained file, file tree, evidence, source snippets, dark mode, `--prove-json` merge.
+- ✅ **Java support** (done): tree-sitter based scanner (optional `pip install "deadcode-hunter[java]"`), same pipeline — confidence levels, evidence chains, `prove`, HTML reports; `--lang auto|python|java` to select.
 - **TypeScript support**: bring the same "cross-file references + confidence" model to TS (on top of tsc symbol resolution).
 - **LLM-assisted investigator**: an optional LLM pass over low-confidence candidates to suggest *why* something might still be alive. The static engine stays deterministic — the LLM only advises, never decides.
 

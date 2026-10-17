@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "deadcode-hunter"
-version = "0.1.0"
-description = "Find dead code in Python projects — and prove it's safe to delete."
+version = "0.2.0"
+description = "Find dead code in Python and Java projects — and prove it's safe to delete."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -17,6 +17,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+java = ["tree-sitter>=0.25", "tree-sitter-java>=0.23"]
 
 [project.scripts]
 deadcode-hunter = "deadcode_hunter.cli:main"

@@ -320,6 +320,10 @@ def _delete_symbol(path: Path, symbol: Symbol) -> tuple[bool, str]:
     Returns (True, "") on success, or (False, reason) when the deletion
     cannot be done cleanly -- the caller should skip the candidate.
     """
+    if path.suffix == ".java":
+        from .scanner_java import delete_java_symbol
+
+        return delete_java_symbol(path, symbol)
     try:
         source = path.read_text(encoding="utf-8")
     except OSError as exc:
@@ -432,6 +436,7 @@ def run_prove(
     test_cmd: str = DEFAULT_TEST_CMD,
     timeout: int = DEFAULT_TIMEOUT,
     progress: bool = True,
+    lang: str = "auto",
 ) -> ProveReport:
     """Prove candidates safe to delete.
 
@@ -462,7 +467,7 @@ def run_prove(
             )
         threshold = CONFIDENCE_ORDER[min_confidence]
         candidates = [
-            c for c in run(root) if CONFIDENCE_ORDER[c.confidence] >= threshold
+            c for c in run(root, lang=lang) if CONFIDENCE_ORDER[c.confidence] >= threshold
         ]
         results = []
         total = len(candidates)

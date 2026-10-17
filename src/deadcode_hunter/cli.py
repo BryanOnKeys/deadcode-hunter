@@ -23,7 +23,7 @@ from .prover import (
 from .report import write_report
 
 app = typer.Typer(
-    help="Find dead code in Python projects — and prove it's safe to delete.",
+    help="Find dead code in Python and Java projects — and prove it's safe to delete.",
     no_args_is_help=True,
 )
 console = Console()
@@ -43,6 +43,13 @@ def _check_confidence(min_confidence: str) -> str:
     normalized = min_confidence.lower()
     if normalized not in CONFIDENCE_ORDER:
         raise typer.BadParameter("--min-confidence must be high, medium or low")
+    return normalized
+
+
+def _check_lang(lang: str) -> str:
+    normalized = lang.lower()
+    if normalized not in ("auto", "python", "java"):
+        raise typer.BadParameter("--lang must be 'auto', 'python' or 'java'")
     return normalized
 
 
@@ -139,14 +146,22 @@ def scan(
     min_confidence: str = typer.Option(
         "low", "--min-confidence", help="Minimum confidence to show: high, medium or low"
     ),
+    lang: str = typer.Option(
+        "auto", "--lang", help="Language to scan: auto, python or java"
+    ),
 ) -> None:
     """Scan a path for dead code and report candidates with evidence."""
     output_format = _check_format(format)
     confidence = _check_confidence(min_confidence)
+    language = _check_lang(lang)
     target = Path(path)
     if not target.exists():
         raise typer.BadParameter(f"path does not exist: {path}")
-    candidates = _filter_candidates(run(target), confidence)
+    try:
+        candidates = _filter_candidates(run(target, lang=language), confidence)
+    except RuntimeError as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(code=1)
     if output_format == "json":
         _print_json(candidates, path)
     else:
@@ -170,11 +185,15 @@ def prove(
         DEFAULT_TIMEOUT, "--timeout", help="Per-test-run timeout in seconds"
     ),
     format: str = typer.Option("table", "--format", help="Output format: table or json"),
+    lang: str = typer.Option(
+        "auto", "--lang", help="Language to scan: auto, python or java"
+    ),
 ) -> None:
     """Prove candidates safe to delete: remove each in an isolated git
     worktree and run the test suite. The working tree is never modified."""
     output_format = _check_format(format)
     confidence = _check_confidence(min_confidence)
+    language = _check_lang(lang)
     target = Path(path)
     if not target.exists():
         raise typer.BadParameter(f"path does not exist: {path}")
@@ -185,6 +204,7 @@ def prove(
             test_cmd=test_cmd,
             timeout=timeout,
             progress=(output_format == "table"),
+            lang=language,
         )
     except RuntimeError as exc:
         console.print(f"[red]Error:[/red] {exc}")
@@ -212,6 +232,9 @@ def report(
         help="Path to a 'prove --format json' output file; its proven/breaks "
         "results are merged into the report",
     ),
+    lang: str = typer.Option(
+        "auto", "--lang", help="Language to scan: auto, python or java"
+    ),
 ) -> None:
     """Generate a self-contained HTML report of dead-code candidates.
 
@@ -219,12 +242,17 @@ def report(
     summary stats, a clickable file tree, per-symbol evidence, expandable
     source snippets with dead lines highlighted, and a symbol search box.
     """
+    language = _check_lang(lang)
     target = Path(path)
     if not target.exists():
         raise typer.BadParameter(f"path does not exist: {path}")
     if prove_json is not None and not Path(prove_json).exists():
         raise typer.BadParameter(f"prove json does not exist: {prove_json}")
-    candidates = run(target)
+    try:
+        candidates = run(target, lang=language)
+    except RuntimeError as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(code=1)
     # Mirror pipeline.run: for a single file the scan root is its parent dir.
     root = target if target.is_dir() else target.parent
     out = write_report(candidates, root, output, prove_json=prove_json, path_label=path)
