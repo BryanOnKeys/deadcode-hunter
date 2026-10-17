@@ -325,6 +325,10 @@ def _delete_symbol(path: Path, symbol: Symbol) -> tuple[bool, str]:
         from .scanner_java import delete_java_symbol
 
         return delete_java_symbol(path, symbol)
+    if path.suffix in (".ts", ".tsx", ".js", ".jsx", ".mts", ".cts"):
+        from .scanner_typescript import delete_typescript_symbol
+
+        return delete_typescript_symbol(path, symbol)
     try:
         source = path.read_text(encoding="utf-8")
     except OSError as exc:

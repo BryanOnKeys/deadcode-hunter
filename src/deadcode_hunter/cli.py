@@ -1,6 +1,7 @@
 """Command-line interface for deadcode-hunter."""
 
 import json
+import sys
 from pathlib import Path
 
 import typer
@@ -52,8 +53,10 @@ def _check_confidence(min_confidence: str) -> str:
 
 def _check_lang(lang: str) -> str:
     normalized = lang.lower()
-    if normalized not in ("auto", "python", "java"):
-        raise typer.BadParameter("--lang must be 'auto', 'python' or 'java'")
+    if normalized not in ("auto", "python", "java", "typescript"):
+        raise typer.BadParameter(
+            "--lang must be 'auto', 'python', 'java' or 'typescript'"
+        )
     return normalized
 
 
@@ -169,7 +172,7 @@ def scan(
         "(default: low, or [tool.deadcode-hunter] min-confidence)",
     ),
     lang: str = typer.Option(
-        "auto", "--lang", help="Language to scan: auto, python or java"
+        "auto", "--lang", help="Language to scan: auto, python, java or typescript"
     ),
     save_baseline: str | None = typer.Option(
         None,
@@ -249,7 +252,7 @@ def prove(
     ),
     format: str = typer.Option("table", "--format", help="Output format: table or json"),
     lang: str = typer.Option(
-        "auto", "--lang", help="Language to scan: auto, python or java"
+        "auto", "--lang", help="Language to scan: auto, python, java or typescript"
     ),
 ) -> None:
     """Prove candidates safe to delete: remove each in an isolated git
@@ -301,6 +304,55 @@ def _print_clean_plan_table(plan: CleanPlan, path: str) -> None:
     console.print(table)
 
 
+def _stdin_is_tty() -> bool:
+    """Whether stdin is a terminal (separate function so tests can patch it)."""
+    return sys.stdin.isatty()
+
+
+def _interactive_select(plan: CleanPlan) -> list[Candidate] | None:
+    """Let the user pick deletions one by one. Returns None when aborted."""
+    from rich.prompt import Prompt
+
+    selected: list[Candidate] = []
+    total = len(plan.proven)
+    for i, candidate in enumerate(plan.proven, 1):
+        symbol = candidate.symbol
+        console.print(
+            f"[bold]{i}/{total}[/bold] [cyan]{symbol.file}:{symbol.lineno}[/cyan] "
+            f"{symbol.qualname} [dim]({symbol.kind}, {candidate.confidence})[/dim]"
+        )
+        fpath = plan.toplevel / plan.scan_rel / symbol.file
+        try:
+            lines = fpath.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            lines = []
+        if lines:
+            lo = max(0, symbol.lineno - 3)
+            hi = min(len(lines), symbol.end_lineno + 2)
+            for lineno in range(lo, hi):
+                marker = (
+                    "[red]>[/red]"
+                    if symbol.lineno <= lineno + 1 <= symbol.end_lineno
+                    else " "
+                )
+                console.print(f"  {marker} [dim]{lineno + 1:4d} │[/dim] {lines[lineno]}")
+        choice = Prompt.ask(
+            "Delete this symbol?",
+            choices=["y", "n", "a", "q"],
+            default="y",
+            show_choices=True,
+        )
+        if choice == "y":
+            selected.append(candidate)
+        elif choice == "a":
+            selected.extend(plan.proven[i - 1 :])
+            break
+        elif choice == "q":
+            return None
+        # "n": skip this one.
+    return selected
+
+
 @app.command()
 def clean(
     path: str = typer.Argument(
@@ -322,7 +374,7 @@ def clean(
         DEFAULT_TIMEOUT, "--timeout", help="Per-test-run timeout in seconds"
     ),
     lang: str = typer.Option(
-        "auto", "--lang", help="Language to scan: auto, python or java"
+        "auto", "--lang", help="Language to scan: auto, python, java or typescript"
     ),
     yes: bool = typer.Option(
         False, "--yes", help="Apply deletions without asking for confirmation"
@@ -331,6 +383,12 @@ def clean(
         False,
         "--dry-run",
         help="Show what would be deleted without changing any files",
+    ),
+    interactive: bool = typer.Option(
+        False,
+        "--interactive",
+        "-i",
+        help="Pick deletions one by one (y/n/a/q); needs a terminal",
     ),
     format: str = typer.Option("table", "--format", help="Output format: table or json"),
 ) -> None:
@@ -342,6 +400,16 @@ def clean(
     """
     output_format = _check_format(format)
     language = _check_lang(lang)
+    if interactive and (yes or dry_run):
+        raise typer.BadParameter(
+            "--interactive cannot be combined with --yes or --dry-run"
+        )
+    if interactive and not _stdin_is_tty():
+        console.print(
+            "[red]Error:[/red] --interactive needs a terminal; "
+            "use --yes for scripts and CI"
+        )
+        raise typer.Exit(code=1)
     target = Path(path)
     if not target.exists():
         raise typer.BadParameter(f"path does not exist: {path}")
@@ -365,7 +433,17 @@ def clean(
     if not plan.proven:
         console.print("[green]Nothing proven safe to delete.[/green]")
         return
-    if output_format == "json":
+    if interactive:
+        selected = _interactive_select(plan)
+        if not selected:
+            console.print(
+                "[yellow]Nothing selected — no files were changed.[/yellow]"
+            )
+            return
+        plan = CleanPlan(
+            toplevel=plan.toplevel, scan_rel=plan.scan_rel, proven=selected
+        )
+    elif output_format == "json":
         # NOTE: plain print, not console.print — rich would wrap long lines
         # and produce invalid JSON.
         print(
@@ -386,7 +464,7 @@ def clean(
             "[yellow]Dry run: no files were changed.[/yellow]", style="yellow"
         )
         return
-    if not yes:
+    if not yes and not interactive:
         # NOTE: pairs best with --yes when scripting; the prompt goes to
         # stdout alongside --format json output.
         typer.confirm(
@@ -444,7 +522,7 @@ def report(
         "results are merged into the report",
     ),
     lang: str = typer.Option(
-        "auto", "--lang", help="Language to scan: auto, python or java"
+        "auto", "--lang", help="Language to scan: auto, python, java or typescript"
     ),
 ) -> None:
     """Generate a self-contained HTML report of dead-code candidates.
@@ -471,6 +549,126 @@ def report(
     console.print(
         f"[green]Report written to {out}[/green] ({len(candidates)} candidates)"
     )
+
+
+from .deps import DepsReport, run_deps
+from .duplicates import find_duplicates
+
+
+def _print_duplicates_table(groups, path: str) -> None:
+    if not groups:
+        console.print("[green]No duplicated code blocks found.[/green]")
+        return
+    for i, group in enumerate(groups, 1):
+        console.print(
+            f"[bold]Group {i}[/bold]: {group.lines} lines × "
+            f"{len(group.blocks)} occurrence(s), {group.tokens} tokens"
+        )
+        table = Table(show_header=True)
+        table.add_column("File", style="cyan")
+        table.add_column("Lines")
+        for block in group.blocks:
+            table.add_row(block.file, f"{block.start}-{block.end}")
+        console.print(table)
+
+
+def _print_deps_table(report: DepsReport, path: str) -> None:
+    if report.unused:
+        table = Table(title=f"deadcode-hunter deps: unused dependencies in {path}")
+        table.add_column("Package", style="red")
+        table.add_column("Declared in")
+        table.add_column("Requirement")
+        for dep in report.unused:
+            table.add_row(dep.name, dep.source, dep.raw)
+        console.print(table)
+    else:
+        console.print("[green]No unused dependencies found.[/green]")
+    if report.undetermined:
+        console.print(
+            "[yellow]Undetermined (project uses dynamic imports — verify manually):[/yellow]"
+        )
+        for dep in report.undetermined:
+            console.print(f"  [yellow]?[/yellow] {dep.name} ({dep.source})")
+    if report.skipped_lines:
+        console.print("[dim]Skipped lines:[/dim]")
+        for line in report.skipped_lines:
+            console.print(f"  [dim]{line}[/dim]")
+    console.print(
+        f"used: {len(report.used)}  unused: {len(report.unused)}"
+        f"  undetermined: {len(report.undetermined)}",
+        style="dim",
+    )
+
+
+@app.command()
+def deps(
+    path: str = typer.Argument(
+        ..., help="Project directory containing requirements.txt / pyproject.toml"
+    ),
+    format: str = typer.Option("table", "--format", help="Output format: table or json"),
+) -> None:
+    """Find declared-but-unused Python dependencies.
+
+    Reads requirements.txt and [project] dependencies from pyproject.toml,
+    then checks which declared packages are actually imported anywhere.
+    """
+    output_format = _check_format(format)
+    target = Path(path)
+    if not target.exists():
+        raise typer.BadParameter(f"path does not exist: {path}")
+    try:
+        report = run_deps(target)
+    except RuntimeError as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(code=1)
+    if output_format == "json":
+        # NOTE: plain print, not console.print — rich would wrap long lines
+        # and produce invalid JSON.
+        print(json.dumps(report.to_dict(path), indent=2, ensure_ascii=False))
+    else:
+        _print_deps_table(report, path)
+
+
+@app.command()
+def duplicates(
+    path: str = typer.Argument(..., help="Directory (or file) to scan for duplicates"),
+    min_lines: int = typer.Option(
+        6, "--min-lines", help="Minimum duplicated block length in lines"
+    ),
+    min_tokens: int = typer.Option(
+        50, "--min-tokens", help="Minimum duplicated block size in tokens"
+    ),
+    format: str = typer.Option("table", "--format", help="Output format: table or json"),
+) -> None:
+    """Find copy-pasted code blocks (Python only).
+
+    Lines are token-normalized (identifiers -> ID, literals -> LIT) so
+    renamed copies still match.
+    """
+    output_format = _check_format(format)
+    if min_lines < 2:
+        raise typer.BadParameter("--min-lines must be at least 2")
+    if min_tokens < 1:
+        raise typer.BadParameter("--min-tokens must be at least 1")
+    target = Path(path)
+    if not target.exists():
+        raise typer.BadParameter(f"path does not exist: {path}")
+    groups = find_duplicates(target, min_lines=min_lines, min_tokens=min_tokens)
+    if output_format == "json":
+        # NOTE: plain print, not console.print — rich would wrap long lines
+        # and produce invalid JSON.
+        print(
+            json.dumps(
+                {
+                    "path": path,
+                    "groups": [g.to_dict() for g in groups],
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+    else:
+        _print_duplicates_table(groups, path)
 
 
 if __name__ == "__main__":

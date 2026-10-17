@@ -1,5 +1,5 @@
 name: "deadcode-hunter"
-description: "Find dead code in Python and Java projects — and prove it's safe to delete."
+description: "Find dead code in Python, Java and TypeScript projects — and prove it's safe to delete."
 branding:
   icon: "search"
   color: "red"
@@ -16,7 +16,7 @@ inputs:
   pip-version:
     description: "deadcode-hunter version to install from PyPI"
     required: false
-    default: "0.3.0"
+    default: "0.4.0"
 
 outputs:
   findings:
