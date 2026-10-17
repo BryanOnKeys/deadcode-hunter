@@ -117,8 +117,11 @@ Dry run: no files were changed.
 
 ```bash
 deadcode-hunter clean . --yes            # 不确认直接应用
+deadcode-hunter clean . -i               # 逐条挑选（y/n/a/q），带源码片段
 deadcode-hunter clean . --format json    # 机器可读的计划 + 结果
 ```
+
+`--interactive`（`-i`）在验证之后、应用之前，让你对每个已证明安全的候选逐条决定：`y` 删除、`n` 跳过、`a` 删掉本条及剩余全部、`q` 退出（什么都不改）。需要终端——脚本和 CI 里用 `--yes`。
 
 ### Baseline：只看新增的死代码
 
@@ -153,6 +156,43 @@ test-cmd = "pytest -q"                      # prove / clean 的默认测试命�
 ```
 
 CLI 显式传参永远覆盖配置文件。
+
+### deps：找出没人用的依赖
+
+换个维度的死代码：`requirements.txt` / `[project] dependencies` 里声明了、但代码里从没 import 过的包。import 名到发行包名的映射靠内置表（`yaml` → `PyYAML`、`PIL` → `pillow`、`sklearn` → `scikit-learn` 等著名错位）+ 大小写/`-`/`_` 归一化启发式。
+
+```bash
+$ deadcode-hunter deps .
+        deadcode-hunter deps: unused dependencies in .
+┏━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Package         ┃ Declared in      ┃ Requirement          ┃
+┡━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━┩
+│ some-unused-pkg │ requirements.txt │ some-unused-pkg==1.0 │
+└─────────────────┴──────────────────┴──────────────────────┘
+```
+
+诚实规则：项目里用了动态导入（`__import__`、`getattr`……）时，"没用过"的结论不可信——这些会进单独的 **undetermined** 列表，而不是被判死刑。`-r` 嵌套和 URL 依赖会标注为跳过，不会崩。
+
+### duplicates：找出复制粘贴的代码
+
+死代码的表亲。按 token 归一化每一行（标识符 → `ID`、字符串/数字 → `LIT`，关键字保留），滑窗哈希找重复块——改了变量名也照样能匹配：
+
+```bash
+$ deadcode-hunter duplicates .
+Group 1: 11 lines × 2 occurrence(s), 56 tokens
+┏━━━━━━┳━━━━━━━┓
+┃ File ┃ Lines ┃
+┡━━━━━━╇━━━━━━━┩
+│ a.py │ 1-11  │
+│ b.py │ 1-11  │
+└──────┴───────┘
+```
+
+```bash
+deadcode-hunter duplicates . --min-lines 6 --min-tokens 50  # 默认值
+```
+
+同一文件内和跨文件的重复都报，按组展示。v1 只做 Python（TypeScript/Java 在 roadmap）。
 
 ### 置信度三档
 
@@ -219,12 +259,41 @@ deadcode-hunter prove ./my-java-project --test-cmd "mvn -q test"
 
 Java 特有的局限：同样没有完整类型推导；注解处理器 / DI 框架（Spring、Dagger……）的装配是隐式的——框架管理的 bean 被报 high 时多留个心眼。
 
+## TypeScript 支持
+
+TypeScript 引擎基于 [tree-sitter](https://tree-sitter.github.io/)（`tree-sitter-typescript` + `tree-sitter-javascript`），走**同一套管线**——同样的置信度分级、证据链、`prove`、HTML 报告。`.ts` 用 typescript grammar，`.tsx` 用 tsx grammar（含 JSX 组件引用），`.js`/`.jsx` 用 javascript grammar。按扩展名自动识别；Python、Java、TypeScript 混在一个目录里会一起扫；可用 `--lang` 覆盖：
+
+```bash
+pip install "deadcode-hunter[typescript]"
+
+deadcode-hunter scan ./my-ts-project
+deadcode-hunter scan ./mixed --lang typescript   # 只扫 .ts/.tsx/.js/.jsx
+```
+
+TypeScript 特有的规则：
+
+- `export` 出去的符号是模块的公共接口——**永不报告**（和 Python 的 `__all__` 一个待遇），包括导出类的成员方法和 `export { a, b }` 的名字
+- 接口（interface）和类型别名是契约——永不报告；枚举是真实的值，会正常分析
+- 被装饰的类/函数降为 medium（装饰类的成员继承这个降级）
+- `this.x` 解析到所在类的成员；`new Foo()` 保住类；`const s = new Service()` + `s.serve()` 靠构造器类型跟踪解析
+- `console`/`process`/`window`/`globalThis` 是平台全局——不算引用，不产生噪音
+- 相对导入（`./util`、`../lib`）会解析到磁盘上的文件；副作用导入（`import "./polyfill"`）永不报告
+
+TypeScript 项目用 `prove`/`clean` 时，用 `--test-cmd` 指定自己的测试命令：
+
+```bash
+deadcode-hunter prove ./my-ts-project --test-cmd "npm test"
+deadcode-hunter clean ./my-ts-project --test-cmd "npx jest"
+```
+
+TypeScript 特有的局限：无类型标注的变量走同样的保守弱引用规则；框架魔法（Angular DI、注册路由的装饰器）是隐式的——框架管理的代码被报 high 时多留个心眼。
+
 ## GitHub Action
 
 CI 里用 composite action（`action.yml`）：
 
 ```yaml
-- uses: zheng0629/deadcode-hunter@v0.3.0
+- uses: zheng0629/deadcode-hunter@v0.4.0
   with:
     path: .
     min-confidence: high
@@ -234,7 +303,7 @@ CI 里用 composite action（`action.yml`）：
 |---|---|---|
 | `path` | `.` | 扫描的目录（或文件） |
 | `min-confidence` | `high` | 最低置信度：high / medium / low |
-| `pip-version` | `0.3.0` | 从 PyPI 安装的版本 |
+| `pip-version` | `0.4.0` | 从 PyPI 安装的版本 |
 
 action 输出 `findings`（如 `total=3 high=2 medium=1 low=0`）。[`examples/pr-comment.yml`](examples/pr-comment.yml) 是可直接抄的 workflow 示例——在每个 PR 下发评论展示 findings 表格（首次创建，之后更新同一条）。
 
@@ -250,7 +319,10 @@ action 输出 `findings`（如 `total=3 high=2 medium=1 low=0`）。[`examples/p
 - **M7 GitHub Action**（已实现）：composite `action.yml` + PR 评论 workflow 示例 + 本仓库自己的 CI（含 `--fail-on-new` dogfood 门禁）。
 - **M8 Baseline**（已实现）：`--save-baseline` / `--baseline` 只报告新增的死代码；`--fail-on-new` 供 CI 当门禁（exit 1/0）。
 - **M9 配置文件**（已实现）：被扫项目 `pyproject.toml` 的 `[tool.deadcode-hunter]`——`exclude`、`entry-points`、`min-confidence`、`test-cmd` 默认值，CLI 显式传参覆盖。
-- **TypeScript 支持**：把同一套"跨文件引用 + 置信度"模型搬到 TS（基于 tsc 的符号解析）。
+- **TypeScript 支持**（已实现）：基于 tree-sitter 的扫描器（可选安装 `pip install "deadcode-hunter[typescript]"`），支持 `.ts`/`.tsx`/`.js`/`.jsx`（含 JSX 组件引用），走同一套管线；`export` 的符号视为公共接口永不报告；`--lang typescript`。
+- **M11 `deps`**（已实现）：`deadcode-hunter deps`——从 `requirements.txt` / `[project] dependencies` 找声明了但从没 import 的包，内置 import→发行包名映射表；动态导入项目里的可疑项进 *undetermined* 而不是判死刑。
+- **M12 `duplicates`**（已实现）：`deadcode-hunter duplicates`——token 归一化的复制粘贴检测（Python），同文件/跨文件都报，按组展示，`--min-lines` / `--min-tokens` 可调。
+- **M13 交互式清理**（已实现）：`clean --interactive`（`-i`）——验证之后逐条展示源码片段，y/n/a/q 逐条决定删不删；非终端直接拒绝（脚本用 `--yes`）。
 
 ## 开发
 

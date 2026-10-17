@@ -5,7 +5,7 @@
 ![build](https://img.shields.io/badge/build-passing-brightgreen)
 ![python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
-![version](https://img.shields.io/badge/version-0.3.0-orange)
+![version](https://img.shields.io/badge/version-0.4.0-orange)
 
 Most dead-code detectors (like vulture) do text-level "did this name appear anywhere" matching — cross-file imports, instance methods and decorators quickly turn into false positives or misses. deadcode-hunter does **cross-file reference resolution**: it understands `import` chains, `self` method calls, and method calls after `obj = Klass()`, then grades every candidate with a **confidence level** — only "deleting this is definitely safe" gets marked high.
 
@@ -142,8 +142,14 @@ same AST-driven logic as `prove`, and you confirm the list unless you pass
 
 ```bash
 deadcode-hunter clean . --yes            # apply without asking
+deadcode-hunter clean . -i               # pick deletions one by one (y/n/a/q)
 deadcode-hunter clean . --format json    # machine-readable plan + result
 ```
+
+With `--interactive` (`-i`), each proven candidate is shown with a source
+snippet and you decide per item: `y` delete, `n` skip, `a` delete this and
+all remaining, `q` abort (nothing is applied). Needs a terminal — scripts
+and CI should use `--yes` instead.
 
 ### Baseline mode — only new dead code
 
@@ -189,6 +195,57 @@ test-cmd = "pytest -q"                      # default test command for prove / c
 ```
 
 CLI flags always override config values.
+
+### deps — unused dependencies
+
+A different axis of dead weight: packages declared in `requirements.txt`
+or `[project] dependencies` that nothing ever imports. Import names are
+mapped to distribution names (a built-in table covers the famous
+mismatches — `yaml` → `PyYAML`, `PIL` → `pillow`,
+`sklearn` → `scikit-learn` — the rest is case/`-`/`_` normalized).
+
+```bash
+$ deadcode-hunter deps .
+        deadcode-hunter deps: unused dependencies in .
+┏━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Package         ┃ Declared in      ┃ Requirement          ┃
+┡━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━┩
+│ some-unused-pkg │ requirements.txt │ some-unused-pkg==1.0 │
+└─────────────────┴──────────────────┴──────────────────────┘
+Skipped lines:
+  line 7: -r nested.txt (not supported)
+used: 4  unused: 1  undetermined: 0
+```
+
+Honesty rule: when the project uses dynamic imports (`__import__`,
+`getattr`, …), an "unused" verdict can't be trusted — those go into a
+separate **undetermined** list instead of being declared dead. `-r`
+includes and URL requirements are reported as skipped, not crashed on.
+
+### duplicates — copy-pasted code
+
+Dead code's cousin. Lines are token-normalized (identifiers → `ID`,
+strings/numbers → `LIT`, keywords kept), then a sliding window finds
+blocks that match even after renaming:
+
+```bash
+$ deadcode-hunter duplicates .
+Group 1: 11 lines × 2 occurrence(s), 56 tokens
+┏━━━━━━┳━━━━━━━┓
+┃ File ┃ Lines ┃
+┡━━━━━━╇━━━━━━━┩
+│ a.py │ 1-11  │
+│ b.py │ 1-11  │
+└──────┴───────┘
+```
+
+```bash
+deadcode-hunter duplicates . --min-lines 6 --min-tokens 50  # defaults
+deadcode-hunter duplicates . --format json                  # machine-readable
+```
+
+Same-file and cross-file duplicates are both reported, grouped by block.
+Python only in v1 (TypeScript/Java are roadmap).
 
 ### Confidence levels
 
@@ -242,12 +299,59 @@ deadcode-hunter prove ./my-java-project --test-cmd "mvn -q test"
 
 Java-specific limitations: no full type inference (same conservative weak-reference rule as Python); annotation processors and DI frameworks (Spring, Dagger, …) wire code invisibly — treat `high` on framework-managed beans with suspicion.
 
+## TypeScript support
+
+The TypeScript engine is built on [tree-sitter](https://tree-sitter.github.io/)
+(`tree-sitter-typescript` + `tree-sitter-javascript`) and feeds the **same
+pipeline** — same confidence levels, evidence chains, `prove`, and HTML
+reports. `.ts` uses the typescript grammar, `.tsx` the tsx grammar
+(including JSX component references), `.js`/`.jsx` the javascript grammar.
+Language is detected by file extension; directories mixing Python, Java and
+TypeScript scan all three. Override with `--lang`:
+
+```bash
+pip install "deadcode-hunter[typescript]"
+
+deadcode-hunter scan ./my-ts-project
+deadcode-hunter scan ./mixed --lang typescript   # only .ts/.tsx/.js/.jsx files
+```
+
+TypeScript-specific rules:
+
+- `export`-ed symbols are the module's public surface and are **never
+  reported** (like Python's `__all__`) — this includes members of exported
+  classes and names from `export { a, b }`
+- Interfaces and type aliases are contracts — never reported; enums are
+  real values and are analyzed
+- Decorated classes/functions → medium (members of a decorated class
+  inherit the downgrade)
+- `this.x` resolves to the enclosing class's members; `new Foo()` keeps
+  the class alive; `const s = new Service()` + `s.serve()` resolves via
+  initializer type tracking
+- `console`/`process`/`window`/`globalThis` member accesses are platform
+  globals, not references — no noise
+- Relative imports (`./util`, `../lib`) resolve to files on disk;
+  side-effect imports (`import "./polyfill"`) are never flagged
+
+For `prove`/`clean` on TypeScript projects, point `--test-cmd` at your own
+runner:
+
+```bash
+deadcode-hunter prove ./my-ts-project --test-cmd "npm test"
+deadcode-hunter clean ./my-ts-project --test-cmd "npx jest"
+```
+
+TypeScript-specific limitations: same conservative weak-reference rule as
+Python/Java for untyped variables; framework magic (Angular DI, decorators
+that register routes) is invisible — treat `high` on framework-managed
+code with suspicion.
+
 ## GitHub Action
 
 Use deadcode-hunter in CI with the composite action (`action.yml`):
 
 ```yaml
-- uses: zheng0629/deadcode-hunter@v0.3.0
+- uses: zheng0629/deadcode-hunter@v0.4.0
   with:
     path: .
     min-confidence: high
@@ -257,7 +361,7 @@ Use deadcode-hunter in CI with the composite action (`action.yml`):
 |---|---|---|
 | `path` | `.` | Directory (or file) to scan |
 | `min-confidence` | `high` | Minimum confidence: high, medium or low |
-| `pip-version` | `0.3.0` | deadcode-hunter version to install from PyPI |
+| `pip-version` | `0.4.0` | deadcode-hunter version to install from PyPI |
 
 The action exposes a `findings` output (`total=3 high=2 medium=1 low=0`).
 See [`examples/pr-comment.yml`](examples/pr-comment.yml) for a copy-paste
@@ -301,7 +405,10 @@ Honest ones, so you can trust the rest:
 - ✅ **M7 — GitHub Action** (done): composite `action.yml` + copy-paste PR-comment workflow example + this repo's own CI with a `--fail-on-new` dogfood gate.
 - ✅ **M8 — baseline mode** (done): `--save-baseline` / `--baseline` report only new dead code; `--fail-on-new` exits 1 for CI.
 - ✅ **M9 — config file** (done): `[tool.deadcode-hunter]` in the scanned project's `pyproject.toml` — `exclude`, `entry-points`, `min-confidence`, `test-cmd` defaults.
-- **TypeScript support**: bring the same "cross-file references + confidence" model to TS (on top of tsc symbol resolution).
+- ✅ **TypeScript support** (done): tree-sitter based scanner (optional `pip install "deadcode-hunter[typescript]"`) for `.ts`/`.tsx`/`.js`/`.jsx` — same pipeline, exports treated as public API (never reported), JSX component references, `--lang typescript`.
+- ✅ **M11 — `deps`** (done): declared-but-unused dependency detection from `requirements.txt` / `[project] dependencies`, with an import→distribution mapping table and an honest *undetermined* bucket when dynamic imports are in play.
+- ✅ **M12 — `duplicates`** (done): token-normalized copy-paste detection (Python), same-file and cross-file, grouped output, `--min-lines` / `--min-tokens` tunables.
+- ✅ **M13 — interactive clean** (done): `clean --interactive` (`-i`) picks proven deletions one by one (y/n/a/q) with source snippets; needs a terminal, refused otherwise.
 - **LLM-assisted investigator**: an optional LLM pass over low-confidence candidates to suggest *why* something might still be alive. The static engine stays deterministic — the LLM only advises, never decides.
 
 ## Contributing

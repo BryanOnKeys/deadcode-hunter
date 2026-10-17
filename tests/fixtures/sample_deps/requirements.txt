@@ -1,0 +1,7 @@
+# sample project dependencies
+requests==2.31.0
+PyYAML>=6.0
+numpy
+some-unused-pkg==1.0
+scikit-learn>=1.0
+-r nested.txt
