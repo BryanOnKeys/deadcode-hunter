@@ -96,6 +96,64 @@ deadcode-hunter report ./src --prove-json prove.json
 
 > 截图待补充
 
+### clean：一键清理
+
+`prove` 证明删掉是安全的，`clean` 则把这一步做完：扫描 → 在隔离的 git worktree 里逐个验证 → 把已证明安全的删除应用到**工作区**。改动不提交，`git diff` 看过再自己 commit。
+
+```bash
+$ deadcode-hunter clean . --dry-run
+ deadcode-hunter clean: 3 proven-safe deletion(s) in .
+┏━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ File       ┃ Symbol                      ┃ Kind     ┃
+┡━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ billing.py │ billing.legacy_discount     │ function │
+│ billing.py │ billing.LegacyReport        │ class    │
+│ billing.py │ billing.LegacyReport.render │ method   │
+└────────────┴─────────────────────────────┴──────────┘
+Dry run: no files were changed.
+```
+
+安全护栏：目标必须是 git 仓库且工作区干净（有未提交改动就拒绝，先 commit 或 stash）；删除复用 `prove` 的 AST 级删除逻辑；默认先打印清单让你确认，`--yes` 跳过确认。
+
+```bash
+deadcode-hunter clean . --yes            # 不确认直接应用
+deadcode-hunter clean . --format json    # 机器可读的计划 + 结果
+```
+
+### Baseline：只看新增的死代码
+
+一次性大扫除很好，但"不再新增死代码"更好。存一份基线并提交，CI 里卡住它：
+
+```bash
+$ deadcode-hunter scan . --save-baseline baseline.json --min-confidence high
+Baseline saved to baseline.json (3 candidates)
+```
+
+```bash
+$ deadcode-hunter scan . --baseline baseline.json --min-confidence high
+# 只报告基线里没有的新增候选
+```
+
+`--fail-on-new`：有（新增）候选就 exit 1，没有就 exit 0——直接当 CI 门禁：
+
+```bash
+deadcode-hunter scan src --min-confidence high --fail-on-new
+```
+
+### 配置文件
+
+在**被扫项目**自己的 `pyproject.toml` 里写默认配置（只读扫描目标根目录的，不向上递归）：
+
+```toml
+[tool.deadcode-hunter]
+exclude = ["tests/fixtures/**", "docs/**"]  # glob，匹配扫描根目录相对路径
+entry-points = ["mypackage.api.*"]          # glob，匹配符号 qualname：命中则视为活着
+min-confidence = "high"                     # scan / prove / clean 的默认值
+test-cmd = "pytest -q"                      # prove / clean 的默认测试命令
+```
+
+CLI 显式传参永远覆盖配置文件。
+
 ### 置信度三档
 
 | 置信度 | 含义 | 例子 |
@@ -161,12 +219,37 @@ deadcode-hunter prove ./my-java-project --test-cmd "mvn -q test"
 
 Java 特有的局限：同样没有完整类型推导；注解处理器 / DI 框架（Spring、Dagger……）的装配是隐式的——框架管理的 bean 被报 high 时多留个心眼。
 
+## GitHub Action
+
+CI 里用 composite action（`action.yml`）：
+
+```yaml
+- uses: zheng0629/deadcode-hunter@v0.3.0
+  with:
+    path: .
+    min-confidence: high
+```
+
+| Input | 默认值 | 说明 |
+|---|---|---|
+| `path` | `.` | 扫描的目录（或文件） |
+| `min-confidence` | `high` | 最低置信度：high / medium / low |
+| `pip-version` | `0.3.0` | 从 PyPI 安装的版本 |
+
+action 输出 `findings`（如 `total=3 high=2 medium=1 low=0`）。[`examples/pr-comment.yml`](examples/pr-comment.yml) 是可直接抄的 workflow 示例——在每个 PR 下发评论展示 findings 表格（首次创建，之后更新同一条）。
+
+本仓库自己就在用：[`.github/workflows/ci.yml`](.github/workflows/ci.yml) 跑测试，外加 `scan src --min-confidence high --fail-on-new` 当门禁。
+
 ## Roadmap
 
 - **M1 跨文件扫描**（已实现）：跨文件引用解析，high/medium/low 三档置信度 + 证据链。
 - **M2 --prove**（已实现）：`deadcode-hunter prove`——git worktree 隔离 + 测试套件，对 high 置信度候选做"删除验证"，把"证明安全"从静态做到动态。
 - **M3 HTML 报告**（已实现）：`deadcode-hunter report`——单个自包含 HTML 文件（零外部依赖），汇总统计、可点击文件树、证据链、源码片段展开 + 死代码行高亮、符号搜索、深色模式；可用 `--prove-json` 把 prove 结果合并进来。
 - **Java 支持**（已实现）：基于 tree-sitter 的扫描器（可选安装 `pip install "deadcode-hunter[java]"`），走同一套管线——置信度、证据链、`prove`、HTML 报告全都有；`--lang auto|python|java` 可选语言。
+- **M6 `clean`**（已实现）：一键清理——扫描 → worktree 里逐个验证 → 把已证明安全的删除应用到工作区（`--dry-run` 预览、`--yes` 跳过确认、工作区脏则拒绝）。
+- **M7 GitHub Action**（已实现）：composite `action.yml` + PR 评论 workflow 示例 + 本仓库自己的 CI（含 `--fail-on-new` dogfood 门禁）。
+- **M8 Baseline**（已实现）：`--save-baseline` / `--baseline` 只报告新增的死代码；`--fail-on-new` 供 CI 当门禁（exit 1/0）。
+- **M9 配置文件**（已实现）：被扫项目 `pyproject.toml` 的 `[tool.deadcode-hunter]`——`exclude`、`entry-points`、`min-confidence`、`test-cmd` 默认值，CLI 显式传参覆盖。
 - **TypeScript 支持**：把同一套"跨文件引用 + 置信度"模型搬到 TS（基于 tsc 的符号解析）。
 
 ## 开发

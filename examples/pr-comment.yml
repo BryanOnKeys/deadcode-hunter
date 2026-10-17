@@ -1,0 +1,63 @@
+# Example workflow: run deadcode-hunter on every pull request and post the
+# findings as a PR comment (created once, then updated in place).
+#
+# Copy this file to .github/workflows/deadcode-hunter.yml in your own repo.
+# Needs `pull-requests: write` so the action can comment.
+
+name: deadcode-hunter PR review
+
+on:
+  pull_request:
+
+jobs:
+  deadcode:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: hunter
+        uses: zheng0629/deadcode-hunter@v0.3.0
+        with:
+          path: .
+          min-confidence: high
+
+      - name: Comment findings on the PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- deadcode-hunter -->';
+            let body;
+            try {
+              const data = JSON.parse(fs.readFileSync('findings.json', 'utf8'));
+              const cands = data.candidates || [];
+              if (cands.length === 0) {
+                body = `${marker}\n## deadcode-hunter: no dead code found ✅`;
+              } else {
+                const shown = cands.slice(0, 50);
+                const rows = shown
+                  .map(c => `| \`${c.file}\` | \`${c.symbol}\` | ${c.kind} | ${c.confidence} |`)
+                  .join('\n');
+                const more = cands.length > 50 ? `\n\n_...and ${cands.length - 50} more_ ` : '';
+                body = `${marker}\n## deadcode-hunter: ${cands.length} candidate(s)\n\n`
+                  + `| File | Symbol | Kind | Confidence |\n|---|---|---|---|\n${rows}${more}`;
+              }
+            } catch (e) {
+              body = `${marker}\n## deadcode-hunter: scan failed\n\n\`\`\`\n${e.message}\n\`\`\``;
+            }
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const { data: comments } = await github.rest.issues.listComments(
+              { owner, repo, issue_number });
+            const existing = comments.find(
+              c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment(
+                { owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment(
+                { owner, repo, issue_number, body });
+            }

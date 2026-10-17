@@ -5,7 +5,7 @@
 ![build](https://img.shields.io/badge/build-passing-brightgreen)
 ![python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
-![version](https://img.shields.io/badge/version-0.2.0-orange)
+![version](https://img.shields.io/badge/version-0.3.0-orange)
 
 Most dead-code detectors (like vulture) do text-level "did this name appear anywhere" matching — cross-file imports, instance methods and decorators quickly turn into false positives or misses. deadcode-hunter does **cross-file reference resolution**: it understands `import` chains, `self` method calls, and method calls after `obj = Klass()`, then grades every candidate with a **confidence level** — only "deleting this is definitely safe" gets marked high.
 
@@ -115,6 +115,81 @@ The report includes:
 - Search box to filter by symbol name
 - Dark mode follows `prefers-color-scheme`
 
+### clean — one-command cleanup
+
+`prove` tells you a deletion is safe; `clean` finishes the job: it scans,
+proves every candidate in an isolated git worktree, and applies the
+proven-safe deletions to your working tree. Changes are left uncommitted —
+review with `git diff` and commit when happy.
+
+```bash
+$ deadcode-hunter clean . --dry-run
+ deadcode-hunter clean: 3 proven-safe deletion(s) in .
+┏━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ File       ┃ Symbol                      ┃ Kind     ┃
+┡━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ billing.py │ billing.legacy_discount     │ function │
+│ billing.py │ billing.LegacyReport        │ class    │
+│ billing.py │ billing.LegacyReport.render │ method   │
+└────────────┴─────────────────────────────┴──────────┘
+Dry run: no files were changed.
+```
+
+Safety rails: the target must be a git repo with a clean working tree
+(commit or stash first — `clean` refuses otherwise), deletions reuse the
+same AST-driven logic as `prove`, and you confirm the list unless you pass
+`--yes`.
+
+```bash
+deadcode-hunter clean . --yes            # apply without asking
+deadcode-hunter clean . --format json    # machine-readable plan + result
+```
+
+### Baseline mode — only new dead code
+
+One-off cleanups are nice; never *adding* new dead code is nicer. Save a
+baseline once and commit it, then gate CI on it:
+
+```bash
+$ deadcode-hunter scan . --save-baseline baseline.json --min-confidence high
+Baseline saved to baseline.json (3 candidates)
+```
+
+```bash
+$ deadcode-hunter scan . --baseline baseline.json --min-confidence high
+                      deadcode-hunter: 1 candidate(s) in .
+┏━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━┓
+┃ File       ┃ Symbol             ┃ Kind     ┃ Confidence ┃ Evidence           ┃
+┡━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━┩
+│ billing.py │ billing.another_l… │ function │ high       │ no references      │
+│            │                    │          │            │ found in the       │
+│            │                    │          │            │ scanned codebase   │
+└────────────┴────────────────────┴──────────┴────────────┴────────────────────┘
+high: 1  medium: 0  low: 0
+```
+
+Only candidates absent from the baseline are reported. `--fail-on-new`
+exits 1 when anything (new) is found — the CI gate:
+
+```bash
+deadcode-hunter scan src --min-confidence high --fail-on-new
+```
+
+### Configuration file
+
+Put project defaults in the scanned project's own `pyproject.toml`
+(only that file is read — never parent directories):
+
+```toml
+[tool.deadcode-hunter]
+exclude = ["tests/fixtures/**", "docs/**"]  # glob on the scan-root-relative path
+entry-points = ["mypackage.api.*"]          # glob on the symbol qualname: never reported
+min-confidence = "high"                     # default for scan / prove / clean
+test-cmd = "pytest -q"                      # default test command for prove / clean
+```
+
+CLI flags always override config values.
+
 ### Confidence levels
 
 | Level | Meaning | Example |
@@ -167,6 +242,32 @@ deadcode-hunter prove ./my-java-project --test-cmd "mvn -q test"
 
 Java-specific limitations: no full type inference (same conservative weak-reference rule as Python); annotation processors and DI frameworks (Spring, Dagger, …) wire code invisibly — treat `high` on framework-managed beans with suspicion.
 
+## GitHub Action
+
+Use deadcode-hunter in CI with the composite action (`action.yml`):
+
+```yaml
+- uses: zheng0629/deadcode-hunter@v0.3.0
+  with:
+    path: .
+    min-confidence: high
+```
+
+| Input | Default | Description |
+|---|---|---|
+| `path` | `.` | Directory (or file) to scan |
+| `min-confidence` | `high` | Minimum confidence: high, medium or low |
+| `pip-version` | `0.3.0` | deadcode-hunter version to install from PyPI |
+
+The action exposes a `findings` output (`total=3 high=2 medium=1 low=0`).
+See [`examples/pr-comment.yml`](examples/pr-comment.yml) for a copy-paste
+workflow that comments the findings table on every pull request (creates the
+comment once, then updates it in place).
+
+This repo dogfoods it: [`.github/workflows/ci.yml`](.github/workflows/ci.yml)
+runs the test suite and then `scan src --min-confidence high --fail-on-new`
+as a gate.
+
 ## deadcode-hunter vs vulture
 
 | | vulture | deadcode-hunter |
@@ -196,6 +297,10 @@ Honest ones, so you can trust the rest:
 - ✅ **M2 — `prove`** (done): deletion safety proof via isolated git worktrees + your test suite.
 - ✅ **M3 — HTML report** (done): single self-contained file, file tree, evidence, source snippets, dark mode, `--prove-json` merge.
 - ✅ **Java support** (done): tree-sitter based scanner (optional `pip install "deadcode-hunter[java]"`), same pipeline — confidence levels, evidence chains, `prove`, HTML reports; `--lang auto|python|java` to select.
+- ✅ **M6 — `clean`** (done): scan → prove → apply proven-safe deletions to the working tree (`--dry-run` preview, `--yes` to skip confirmation, dirty tree refused).
+- ✅ **M7 — GitHub Action** (done): composite `action.yml` + copy-paste PR-comment workflow example + this repo's own CI with a `--fail-on-new` dogfood gate.
+- ✅ **M8 — baseline mode** (done): `--save-baseline` / `--baseline` report only new dead code; `--fail-on-new` exits 1 for CI.
+- ✅ **M9 — config file** (done): `[tool.deadcode-hunter]` in the scanned project's `pyproject.toml` — `exclude`, `entry-points`, `min-confidence`, `test-cmd` defaults.
 - **TypeScript support**: bring the same "cross-file references + confidence" model to TS (on top of tsc symbol resolution).
 - **LLM-assisted investigator**: an optional LLM pass over low-confidence candidates to suggest *why* something might still be alive. The static engine stays deterministic — the LLM only advises, never decides.
 

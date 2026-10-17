@@ -1,0 +1,45 @@
+name: "deadcode-hunter"
+description: "Find dead code in Python and Java projects — and prove it's safe to delete."
+branding:
+  icon: "search"
+  color: "red"
+
+inputs:
+  path:
+    description: "Directory (or file) to scan for dead code"
+    required: false
+    default: "."
+  min-confidence:
+    description: "Minimum confidence to report: high, medium or low"
+    required: false
+    default: "high"
+  pip-version:
+    description: "deadcode-hunter version to install from PyPI"
+    required: false
+    default: "0.3.0"
+
+outputs:
+  findings:
+    description: "One-line summary of the scan, e.g. 'total=3 high=2 medium=1 low=0'"
+    value: ${{ steps.scan.outputs.findings }}
+
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - id: scan
+      shell: bash
+      run: |
+        pip install "deadcode-hunter==${{ inputs.pip-version }}"
+        deadcode-hunter scan "${{ inputs.path }}" \
+          --min-confidence "${{ inputs.min-confidence }}" \
+          --format json | tee findings.json
+        SUMMARY=$(python3 -c "
+        import json
+        s = json.load(open('findings.json'))['summary']
+        print(f\"total={s['total']} high={s['high']} medium={s['medium']} low={s['low']}\")
+        ")
+        echo "findings=$SUMMARY" >> "$GITHUB_OUTPUT"

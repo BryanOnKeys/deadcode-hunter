@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "deadcode-hunter"
-version = "0.2.0"
+version = "0.3.0"
 description = "Find dead code in Python and Java projects — and prove it's safe to delete."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -13,6 +13,7 @@ keywords = ["dead-code", "static-analysis", "refactoring"]
 dependencies = [
     "typer>=0.9",
     "rich>=13",
+    "tomli>=2.0; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]

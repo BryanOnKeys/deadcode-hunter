@@ -2,18 +2,24 @@
 
 from pathlib import Path
 
+from .config import HunterConfig, matches_any
 from .investigator import investigate
 from .models import Candidate
 from .resolver import resolve_references
 from .scanner import scan_directory as _scan_python
 
 
-def run(root: str | Path, lang: str = "auto") -> list[Candidate]:
+def run(
+    root: str | Path, lang: str = "auto", config: HunterConfig | None = None
+) -> list[Candidate]:
     """Run the full analysis on a directory (or a single file).
 
     lang: 'auto' (default), 'python' or 'java'. With 'auto', .py files are
     scanned with the Python engine and .java files with the Java engine
     (which needs ``pip install deadcode-hunter[java]``).
+
+    config: optional HunterConfig — excluded files are dropped before
+    resolving, and entry-point symbols are never reported.
     """
     normalized = (lang or "auto").lower()
     if normalized not in ("auto", "python", "java"):
@@ -26,5 +32,18 @@ def run(root: str | Path, lang: str = "auto") -> list[Candidate]:
         from .scanner_java import scan_java_directory
 
         files.update(scan_java_directory(root, sid_counter))
+    if config is not None and config.exclude:
+        files = {
+            path: info
+            for path, info in files.items()
+            if not matches_any(path, config.exclude)
+        }
     strong, weak = resolve_references(files)
-    return investigate(files, strong, weak)
+    candidates = investigate(files, strong, weak)
+    if config is not None and config.entry_points:
+        candidates = [
+            c
+            for c in candidates
+            if not matches_any(c.symbol.qualname, config.entry_points)
+        ]
+    return candidates

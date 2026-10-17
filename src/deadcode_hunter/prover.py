@@ -22,6 +22,7 @@ from pathlib import Path
 
 from rich.console import Console
 
+from .config import HunterConfig
 from .models import CONFIDENCE_ORDER, Candidate, Symbol
 from .pipeline import run
 
@@ -437,6 +438,7 @@ def run_prove(
     timeout: int = DEFAULT_TIMEOUT,
     progress: bool = True,
     lang: str = "auto",
+    config: HunterConfig | None = None,
 ) -> ProveReport:
     """Prove candidates safe to delete.
 
@@ -467,7 +469,9 @@ def run_prove(
             )
         threshold = CONFIDENCE_ORDER[min_confidence]
         candidates = [
-            c for c in run(root, lang=lang) if CONFIDENCE_ORDER[c.confidence] >= threshold
+            c
+            for c in run(root, lang=lang, config=config)
+            if CONFIDENCE_ORDER[c.confidence] >= threshold
         ]
         results = []
         total = len(candidates)
