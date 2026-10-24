@@ -1,6 +1,6 @@
 # deadcode-hunter
 
-> Find dead code in Python and Java projects — **and prove it's safe to delete.**
+> Find dead code in Python, Java and TypeScript projects — **and prove it's safe to delete.**
 
 ![build](https://img.shields.io/badge/build-passing-brightgreen)
 ![python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
@@ -9,7 +9,7 @@
 
 Most dead-code detectors (like vulture) do text-level "did this name appear anywhere" matching — cross-file imports, instance methods and decorators quickly turn into false positives or misses. deadcode-hunter does **cross-file reference resolution**: it understands `import` chains, `self` method calls, and method calls after `obj = Klass()`, then grades every candidate with a **confidence level** — only "deleting this is definitely safe" gets marked high.
 
-Zero heavy dependencies (CLI is just typer + rich), the analysis engine uses only stdlib `ast`. **No network, no LLM calls, fully deterministic.**
+The base install uses typer + rich, and the Python analysis engine uses only stdlib `ast`. Java and TypeScript scanners use optional tree-sitter dependencies. **No network, no LLM calls, fully deterministic.**
 
 ## Install
 
@@ -17,6 +17,8 @@ Zero heavy dependencies (CLI is just typer + rich), the analysis engine uses onl
 pip install deadcode-hunter
 # with Java support (tree-sitter based scanner)
 pip install "deadcode-hunter[java]"
+# with TypeScript/JavaScript support (tree-sitter based scanner)
+pip install "deadcode-hunter[typescript]"
 # or from source
 pip install -e ".[dev]"
 ```
@@ -245,7 +247,7 @@ deadcode-hunter duplicates . --format json                  # machine-readable
 ```
 
 Same-file and cross-file duplicates are both reported, grouped by block.
-Python only in v1 (TypeScript/Java are roadmap).
+Duplicate detection currently supports Python only. Dead-code scanning also supports [Java](#java-support) and [TypeScript/JavaScript](#typescript-support).
 
 ### Confidence levels
 
@@ -400,7 +402,7 @@ Honest ones, so you can trust the rest:
 - ✅ **M1 — cross-file scanner** (done): reference resolution across files, high/medium/low confidence with evidence chains.
 - ✅ **M2 — `prove`** (done): deletion safety proof via isolated git worktrees + your test suite.
 - ✅ **M3 — HTML report** (done): single self-contained file, file tree, evidence, source snippets, dark mode, `--prove-json` merge.
-- ✅ **Java support** (done): tree-sitter based scanner (optional `pip install "deadcode-hunter[java]"`), same pipeline — confidence levels, evidence chains, `prove`, HTML reports; `--lang auto|python|java` to select.
+- ✅ **Java support** (done): tree-sitter based scanner (optional `pip install "deadcode-hunter[java]"`), same pipeline — confidence levels, evidence chains, `prove`, HTML reports; `--lang java` to select.
 - ✅ **M6 — `clean`** (done): scan → prove → apply proven-safe deletions to the working tree (`--dry-run` preview, `--yes` to skip confirmation, dirty tree refused).
 - ✅ **M7 — GitHub Action** (done): composite `action.yml` + copy-paste PR-comment workflow example + this repo's own CI with a `--fail-on-new` dogfood gate.
 - ✅ **M8 — baseline mode** (done): `--save-baseline` / `--baseline` report only new dead code; `--fail-on-new` exits 1 for CI.
