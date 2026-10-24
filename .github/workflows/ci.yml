@@ -1,0 +1,27 @@
+# This repo's own CI: run the test suite, then dogfood deadcode-hunter on
+# itself — the codebase has zero high-confidence dead code, so
+# --fail-on-new acts as a gate against introducing any.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: pip install -e ".[dev,java]"
+
+      - name: Tests
+        run: python -m pytest -q
+
+      - name: Dogfood — no high-confidence dead code in our own codebase
+        run: deadcode-hunter scan src --min-confidence high --fail-on-new
