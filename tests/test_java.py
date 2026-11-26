@@ -57,7 +57,7 @@ def test_java_reflection_downgraded_to_medium():
 
 
 def test_java_public_api_evidence_note():
-    cands = _candidates()
+    cands = _candidates(lang="java")
     for q in ("com.example.Service.unusedPublic", "com.example.DeadClass"):
         c = cands[q]
         assert c.confidence == HIGH

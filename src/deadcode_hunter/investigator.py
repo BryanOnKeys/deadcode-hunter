@@ -59,6 +59,8 @@ def investigate(
                 )
             if symbol.in_test_file:
                 evidence.append("defined in a test file")
+            if symbol.public_api:
+                evidence.append("public API: may be referenced by external callers")
             if _in_dynamic_scope(symbol, file_info):
                 confidence = LOW
                 evidence.append(
