@@ -567,7 +567,9 @@ def scan_file(root: Path, path: Path, sid_counter: list[int]) -> FileInfo | None
     return file_info
 
 
-def scan_directory(root: Path | str) -> dict[str, FileInfo]:
+def scan_directory(
+    root: Path | str, sid_counter: list[int] | None = None
+) -> dict[str, FileInfo]:
     """Scan a directory (or a single file) and return per-file extraction results."""
     root_path = Path(root)
     if root_path.is_file():
@@ -575,7 +577,8 @@ def scan_directory(root: Path | str) -> dict[str, FileInfo]:
         root_path = root_path.parent
     else:
         paths = iter_python_files(root_path)
-    sid_counter = [0]
+    if sid_counter is None:
+        sid_counter = [0]
     files: dict[str, FileInfo] = {}
     for path in paths:
         info = scan_file(root_path, path, sid_counter)

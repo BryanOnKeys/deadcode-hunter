@@ -24,6 +24,12 @@ def test_scan_table_lists_high_candidates():
     assert "high" in result.output
 
 
+def test_scan_python_only_uses_the_python_scanner():
+    result = runner.invoke(app, ["scan", FIXTURE, "--lang", "python"])
+    assert result.exit_code == 0, result.exception
+    assert "dead.dead_func" in result.output
+
+
 def test_scan_json_is_machine_readable():
     result = runner.invoke(app, ["scan", FIXTURE, "--format", "json"])
     assert result.exit_code == 0
