@@ -45,6 +45,20 @@ def test_deps_pyproject_source(tmp_path):
     assert report.unused[0].source == "pyproject.toml"
 
 
+@pytest.mark.parametrize(
+    ("import_name", "distribution"),
+    [
+        ("dns", "dnspython"),
+        ("git", "GitPython"),
+        ("OpenGL", "PyOpenGL"),
+        ("slugify", "python-slugify"),
+        ("Xlib", "python-xlib"),
+    ],
+)
+def test_deps_common_distribution_aliases_resolve(import_name, distribution):
+    assert _dist_for_import(import_name) == _normalize_dist(distribution)
+
+
 def test_deps_dynamic_imports_go_undetermined(tmp_path):
     (tmp_path / "requirements.txt").write_text("maybe-dynamic==1.0\n")
     (tmp_path / "m.py").write_text('mod = __import__("maybe_dynamic")\n')
