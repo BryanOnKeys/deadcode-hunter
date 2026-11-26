@@ -21,8 +21,8 @@ Design notes (Java -> shared-model mapping):
   marks both the class and its constructor alive.
 - ``this.x`` is mapped to the resolver's ``self`` convention, so
   ``this.helper()`` resolves to the enclosing class's method.
-- ``main`` methods (and the class containing one) are entry points and are
-  never reported. ``@Override`` methods are treated as alive by construction
+- ``main`` methods, their classes, and types with recognized DI stereotypes
+  are entry points and are never reported. ``@Override`` methods are treated as alive by construction
   (they are wired to their supertype); other annotations only downgrade to
   medium, like Python decorators.
 - Reflection string literals (``Class.forName("com.foo.Bar")``,
@@ -67,6 +67,17 @@ def _require_tree_sitter():
 
 
 _PARSER = None
+
+_MANAGED_TYPE_ANNOTATIONS = frozenset({
+    "jakarta.inject.Singleton",
+    "javax.inject.Singleton",
+    "org.springframework.context.annotation.Configuration",
+    "org.springframework.stereotype.Component",
+    "org.springframework.stereotype.Controller",
+    "org.springframework.stereotype.Repository",
+    "org.springframework.stereotype.Service",
+    "org.springframework.web.bind.annotation.RestController",
+})
 
 
 def _parser():
@@ -279,6 +290,21 @@ class _JavaFileScanner:
                     out.append(text[1:].split("(")[0].strip())
         return out
 
+    def _has_managed_type_annotation(self, annotations: list[str]) -> bool:
+        for name in annotations:
+            if "." in name:
+                if name in _MANAGED_TYPE_ANNOTATIONS:
+                    return True
+                continue
+            binding = self.fi.module_imports.get(name)
+            if binding is not None:
+                if f"{binding.module}.{name}" in _MANAGED_TYPE_ANNOTATIONS:
+                    return True
+            elif any(f"{module}.{name}" in _MANAGED_TYPE_ANNOTATIONS
+                     for module in self.fi.star_imports):
+                return True
+        return False
+
     # -- top level ----------------------------------------------------------
 
     def run(self, tree) -> None:
@@ -334,6 +360,9 @@ class _JavaFileScanner:
         qualname = f"{scope}.{name}" if scope else name
         modifiers = self._modifier_set(node)
         annotations = self._annotations(node)
+        for annotation in annotations:
+            if annotation in self.fi.module_imports:
+                self._name_ref(annotation, scope, node)
         sym = self._symbol(
             name,
             CLASS,
@@ -346,6 +375,7 @@ class _JavaFileScanner:
                 or node.type in ("interface_declaration", "annotation_type_declaration")
             ),
             public_api=("public" in modifiers),
+            is_entry_point=self._has_managed_type_annotation(annotations),
         )
         self.fi.symbols.append(sym)
         self.fi.scope_kinds[qualname] = "class"

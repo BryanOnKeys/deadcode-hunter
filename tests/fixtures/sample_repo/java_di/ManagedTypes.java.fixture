@@ -1,0 +1,19 @@
+package demo;
+
+import jakarta.inject.*;
+import org.springframework.stereotype.Service;
+import example.annotations.Component;
+
+@Service("billing")
+class BillingService {}
+
+@Singleton
+class SharedClock {}
+
+@org.springframework.web.bind.annotation.RestController
+class StatusController {}
+
+@Component
+class CustomComponent {}
+
+class PlainClass {}

@@ -297,7 +297,7 @@ deadcode-hunter prove ./my-java-project --test-cmd "mvn -q test"
 # or: deadcode-hunter prove ./my-java-project --test-cmd "gradle test"
 ```
 
-Java-specific limitations: no full type inference (same conservative weak-reference rule as Python); annotation processors and DI frameworks (Spring, Dagger, …) wire code invisibly — treat `high` on framework-managed beans with suspicion.
+Java-specific limitations: the scanner uses the same conservative weak-reference rule as Python without full type inference. It treats classes with standard Spring stereotypes or `jakarta.inject.Singleton` and `javax.inject.Singleton` as entry points. Review candidates used by other DI annotations or annotation processors before deleting them.
 
 ## TypeScript support
 

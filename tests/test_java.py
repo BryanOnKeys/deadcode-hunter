@@ -21,6 +21,20 @@ def _candidates(path=FIXTURE, lang="auto"):
     return {c.symbol.qualname: c for c in run(path, lang=lang)}
 
 
+def test_framework_managed_java_types_are_entry_points(tmp_path):
+    fixture = FIXTURE.parent / "sample_repo" / "java_di" / "ManagedTypes.java.fixture"
+    source = tmp_path / "ManagedTypes.java"
+    shutil.copyfile(fixture, source)
+    candidates = _candidates(source, lang="java")
+
+    assert "demo.BillingService" not in candidates
+    assert "demo.SharedClock" not in candidates
+    assert "demo.StatusController" not in candidates
+    assert "demo.Service" not in candidates
+    assert "demo.CustomComponent" in candidates
+    assert "demo.PlainClass" in candidates
+
+
 def test_java_high_set():
     cands = _candidates()
     high = {q for q, c in cands.items() if c.confidence == HIGH}
